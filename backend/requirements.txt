@@ -5,3 +5,5 @@ pydantic
 python-dotenv
 httpx
 stripe
+fastapi-cache2[redis]
+redis

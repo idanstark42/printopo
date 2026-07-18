@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, List
 
 # ==========================================
 # USER MODELS
@@ -9,12 +9,12 @@ class UserAuth(BaseModel):
     password: str
 
 # ==========================================
-# DESIGN MODELS
+# DESIGN MODELS - A design define the point in the map and the view of that point
 # ==========================================
+
 class DesignBase(BaseModel):
     """The core fields shared across all design states."""
     title: str
-    product: str
     lng: float
     lat: float
     zoom: float
@@ -24,9 +24,7 @@ class DesignBase(BaseModel):
 
 class DesignCreate(DesignBase):
     """What the frontend sends. Notice it lacks an ID and user_id."""
-    image_data: str
-
-from typing import Optional
+    pass
 
 class DesignUpdate(BaseModel):
     """What the frontend sends when updating. All fields are optional."""
@@ -34,19 +32,33 @@ class DesignUpdate(BaseModel):
     lng: Optional[float] = None
     lat: Optional[float] = None
     zoom: Optional[float] = None
-    style_id: Optional[str] = None
-    product_sku: Optional[str] = None
+    pitch: Optional[float] = None
+    bearing: Optional[float] = None
+    style: Optional[str] = None
+    products: Optional[List[str]] = []
 
 class DesignInDB(DesignBase):
     """What the database holds and returns."""
     id: str
     user_id: str
+    products: List[str]
+
+class ArtworkUpload(BaseModel):
+    title: str
+    image_data: str
+
+class ProductId(BaseModel):
+    blueprint_id: int
+
+class ProductCreate(DesignInDB):
+    blueprint_id: int
+
 
 # ==========================================
 # CART & CHECKOUT MODELS
 # ==========================================
 class CartItem(BaseModel):
-    design_id: str
+    product_id: str
     quantity: int
 
 class CheckoutRequest(BaseModel):

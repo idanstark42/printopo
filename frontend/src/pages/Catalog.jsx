@@ -1,48 +1,41 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
+import { useStore } from '../context/StoreContext'
 
 const BACKEND = 'http://127.0.0.1:8000'
 
-export default function Catalog({ fileId, designTitle }) {
+export default function Catalog() {
   const [products, setProducts] = useState([])
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [mockups, setMockups] = useState([])
+  const { draftDesign, setDraftDesign, cart, setUser } = useStore()
   
   const [searchQuery, setSearchQuery] = useState('')
   const [activeCategory, setActiveCategory] = useState('All')
 
   useEffect(() => {
-    async function fetchCatalog() {
-      try {
-        const res = await fetch(`${BACKEND}/printify/catalog`)
-        const data = await res.json()
-        setProducts(data)
-      } catch (error) {
-        console.error("Failed to load catalog", error)
-      } finally {
-        setLoading(false)
-      }
-    }
+    
     fetchCatalog()
   }, [])
 
   // Use Printify's "brand" field as our categories
   const categories = useMemo(() => {
-    const uniqueCategories = new Set(products.map(p => p.custom_category).filter(Boolean))
+    const uniqueCategories = new Set(products.map(p => p.category).filter(Boolean))
     return ['All', ...Array.from(uniqueCategories).sort()]
   }, [products])
 
   const filteredProducts = useMemo(() => {
     return products.filter(product => {
       const matchesSearch = product.title.toLowerCase().includes(searchQuery.toLowerCase())
-      const matchesCategory = activeCategory === 'All' || product.custom_category === activeCategory
+      const matchesCategory = activeCategory === 'All' || product.category === activeCategory
       return matchesSearch && matchesCategory
     })
   }, [products, searchQuery, activeCategory])
 
   const handleSelectProduct = async (blueprintId) => {
-    if (!fileId) {
+    console.log(draftDesign)
+    if (!draftDesign.fileId) {
       alert("Missing Artwork File ID. Please save your map first!")
       return
     }
@@ -52,23 +45,36 @@ export default function Catalog({ fileId, designTitle }) {
       const { data: { session } } = await supabase.auth.getSession()
       const token = session?.access_token
 
-      const response = await fetch(`${BACKEND}/printify/create-product`, {
+      const detailsResponse = await fetch(`${BACKEND}/printify/prdouct-details`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          title: designTitle || "My Map",
-          file_id: fileId,
           blueprint_id: blueprintId // Sending the actual Printify blueprint ID now
         })
       })
 
-      if (!response.ok) throw new Error("Failed to generate product")
+      if (!detailsResponse.ok) throw new Error("Failed to load product details")
 
-      const result = await response.json()
-      setMockups(result.mockups)
+      const details = await detailsResponse.json()
+      console.log(details)
+      const productCreateResponse = await fetch(`${BACKEND}/printify/prdouct-details`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          blueprint_id: blueprintId // Sending the actual Printify blueprint ID now
+        })
+      })
+
+      if (!productResponse.ok) throw new Error("Failed to generate product")
+
+      const product = await productResponse.json()
+      console.log(product)
       
     } catch (error) {
       console.error(error)
@@ -88,7 +94,7 @@ export default function Catalog({ fileId, designTitle }) {
             <h1 className="text-3xl font-bold mb-2">Choose Your Canvas</h1>
             <p className="text-gray-600 mb-6">Select a product from our live catalog to map your design onto.</p>
             
-            <div className="flex flex-col md:flex-row gap-4 justify-between items-center bg-white/70 p-4 rounded-xl border border-gray-100">
+            <div className="flex flex-col md:flex-row gap-4 justify-between shadow-lg items-center bg-white/70 p-4 rounded-xl border border-gray-100">
               <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
                 {categories.map(category => (
                   <button
@@ -122,9 +128,8 @@ export default function Catalog({ fileId, designTitle }) {
               {filteredProducts.map((item) => (
                 <div 
                   key={item.id} 
-                  onClick={() => !generating && handleSelectProduct(item.id)}
-                  className={`border rounded-xl p-6 transition flex flex-col items-center text-center bg-white/50 ${
-                    generating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-lg hover:border-forest-900'
+                  className={`rounded-xl p-6 transition flex flex-col shadow-lg items-center text-center bg-white/50 ${
+                    generating ? 'opacity-50 cursor-not-allowed' : 'hover:border-forest-900'
                   }`}
                 >
                   <div className="w-full aspect-square bg-white/50 rounded-lg mb-4 flex items-center justify-center overflow-hidden">
@@ -138,11 +143,11 @@ export default function Catalog({ fileId, designTitle }) {
                   <div className="flex flex-col flex-grow w-full justify-between">
                     <div>
                       <h3 className="font-semibold text-gray-800 leading-tight mb-1 text-sm">{item.title}</h3>
-                      <span className="text-xs text-gray-500 uppercase tracking-wider">{item.brand}</span>
                     </div>
                     <button 
+                      onClick={() => !generating && handleSelectProduct(item.id)}
                       disabled={generating}
-                      className="mt-4 px-4 py-2 bg-forest-900 text-white text-sm rounded-md w-full disabled:bg-gray-400 transition-colors"
+                      className="mt-4 px-4 py-2 bg-forest-900 text-white text-sm rounded-md cursor-pointer w-full disabled:bg-gray-400 transition-colors"
                     >
                       {generating ? "Generating..." : "Preview"}
                     </button>

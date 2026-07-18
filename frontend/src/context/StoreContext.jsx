@@ -9,7 +9,7 @@ const StoreContext = createContext()
 
 const emptyDraftDesign = {
   title: 'my item',
-  product: 'pillow-18x18',
+  product: null,
   lng: -121.7600, 
   lat: 46.8500, 
   zoom: 11.00,
@@ -24,6 +24,7 @@ export function StoreProvider({ children }) {
     const savedUser = localStorage.getItem('supabase_user')
     return savedUser ? JSON.parse(savedUser) : null
   })
+  const [catalog, setCatalog] = useState([])
   const [cart, setCart] = useState([])
   const [draftDesign, setDraftDesign] = useState(emptyDraftDesign)
 
@@ -49,6 +50,15 @@ export function StoreProvider({ children }) {
     return () => subscription.unsubscribe()
   }, [])
 
+  async function fetchCatalog() {
+    const res = await fetch(`${BACKEND}/printify/catalog`)
+    setCatalog(await res.json())
+  }
+
+  async function createDesign() {
+
+  }
+
   async function uploadImage() {
     const { data } = await supabase.auth.getSession()
     const token = data.session?.access_token
@@ -60,7 +70,7 @@ export function StoreProvider({ children }) {
     // Add the image directly to your payload
     const payload = {
       title: `printopo-image-${Date.now()}`,
-      image_data: base64Image 
+      image_data: base64Image
     }
 
     const response = await fetch(`${BACKEND}/printify/upload-artwork`, {
@@ -72,7 +82,8 @@ export function StoreProvider({ children }) {
       body: JSON.stringify(payload)
     })
     
-    console.log(await response.json())
+    const result = await response.json()
+    draftDesign.fileId = result.file_id
   }
 
   async function generateHighResMap(draftDesign) {
@@ -117,8 +128,9 @@ export function StoreProvider({ children }) {
   const value = {
     user, setUser,
     cart, setCart,
+    catalog, fetchCatalog,
     draftDesign, setDraftDesign, emptyDraftDesign,
-    uploadImage
+    createDesign
   }
 
   return (

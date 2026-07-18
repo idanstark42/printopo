@@ -22,14 +22,23 @@ const STYLES = [
 
 export default function Editor() {
   const navigate = useNavigate()
-  const { draftDesign, setDraftDesign, cart, setUser, uploadImage } = useStore()
+  const { draftDesign, setDraftDesign, cart, setUser, uploadDesign, catalog, fetchCatalog, } = useStore()
   const [loadingPreview, setLoadingPreview] = useState(false)
   
   const mapContainer = useRef(null)
   const map = useRef(null)
   
   const [searchQuery, setSearchQuery] = useState('')
-  
+
+  useEffect(() => {
+    if(catalog && catalog.length === 0) {
+      fetchCatalog()
+    } else {
+      console.log(catalog)
+    }
+
+  }, [catalog])
+
   useEffect(() => {
     if (map.current) return
 
@@ -84,6 +93,10 @@ export default function Editor() {
     }
   }
 
+  const handleProductChange = e => {
+    setDraftDesign({ ...draftDesign, product: e.target.value })
+  }
+
   const handleStyleChange = (e) => {
     const style = e.target.value
     setDraftDesign({ ...draftDesign, style })
@@ -107,8 +120,8 @@ export default function Editor() {
 
   const handlePreview = async () => {
     setLoadingPreview(true)
-    await uploadImage()
-    navigate('/catalog')
+    await uploadDesign()
+    navigate('/preview')
   }
 
   const handleLogout = () => {
@@ -116,7 +129,7 @@ export default function Editor() {
     navigate('/')
   }
 
-  const product = PRODUCTS.find(p => p.sku === draftDesign.product)
+  const product = catalog.find(p => p.id === draftDesign.product)
 
   return (
     <div className="flex h-screen bg-gray-900">
@@ -140,6 +153,18 @@ export default function Editor() {
 
           {/* Configuration Parameters */}
           <div className="space-y-5">
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-1">Product</label>
+              <select 
+                value={draftDesign.product}
+                onChange={handleProductChange}
+                className="w-full p-2 border border-gray-300 rounded outline-none focus:ring-1 focus:ring-forest-500 focus:border-forest-500 transition-all bg-white"
+              >
+                {catalog.map(item => (
+                  <option key={item.id} value={item.id}>{item.title}</option>
+                ))}
+              </select>
+            </div>
             <div>
               <label className="block text-sm font-bold text-gray-700 mb-1">Map Style</label>
               <select 
@@ -279,7 +304,7 @@ export default function Editor() {
       <div className="flex-grow relative w-full h-full flex justify-center items-center overflow-hidden bg-gray-100">
         <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
         
-        <div 
+        {product ? <div 
           className="absolute z-10 border-4 border-dashed border-gray-800 bg-white/10 pointer-events-none shadow-2xl flex items-center justify-center transition-all duration-300"
           style={{ 
             width: `${product.width * 15}px`, 
@@ -287,7 +312,7 @@ export default function Editor() {
             maxWidth: '90%', maxHeight: '90%' 
           }}
           >
-        </div>
+        </div> : ''}
       </div>
     </div>
   )

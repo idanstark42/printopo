@@ -1,8 +1,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routers import auth, designs, printify, checkout
+from contextlib import asynccontextmanager
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.redis import RedisBackend
+from redis import asyncio as aioredis
 
-app = FastAPI(title="Printopo API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Connect to local Redis instance
+    redis = aioredis.from_url("redis://localhost", encoding="utf8", decode_responses=True)
+    FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
+    yield
+
+app = FastAPI(title="Printopo API", lifespan=lifespan)
 
 origins = ["*"]
 

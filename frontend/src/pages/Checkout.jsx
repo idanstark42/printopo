@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useStore } from '../context/StoreContext'
-import { api } from '../lib/api'
 
 export default function Checkout() {
   const { cart, setCart } = useStore()
@@ -37,10 +36,10 @@ export default function Checkout() {
       // backend expects: process_purchase(checkout: CheckoutRequest, payment_intent_id: str)
       const paymentIntentId = "pi_mock_12345" 
       
-      const response = await api.post(`/checkout/?payment_intent_id=${paymentIntentId}`, payload)
+      // const response = await api.post(`/checkout/?payment_intent_id=${paymentIntentId}`, payload)
       
       // 3. Clear cart and show success
-      alert("Order successful! " + response.message)
+      // alert("Order successful! " + response.message)
       setCart([])
       navigate('/editor')
 

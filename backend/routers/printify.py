@@ -4,6 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 # from utils import get_current_user 
 from catalog import APPROVED_BLUEPRINTS
+from models import ArtworkUpload, ProductId, ProductCreate
+import asyncio
+from fastapi_cache.decorator import cache
 
 router = APIRouter(prefix="/printify", tags=["Printify"])
 
@@ -14,47 +17,79 @@ PRINTIFY_HEADERS = {
     "Content-Type": "application/json" 
 }
 
-# ==========================================
-# PYDANTIC MODELS
-# ==========================================
-class ArtworkUpload(BaseModel):
-    title: str
-    image_data: str
+async def fetch_provider_details(client, blueprint_id, provider):
+    variants_task = client.get(
+        f"https://api.printify.com/v1/catalog/blueprints/{blueprint_id}/print_providers/{provider['id']}/variants.json",
+        headers=PRINTIFY_HEADERS,
+    )
 
-class ProductCreate(BaseModel):
-    title: str
-    file_id: str
-    catalog_id: str  # e.g., "pillow", "poster"
+    shipping_task = client.get(
+        f"https://api.printify.com/v1/catalog/blueprints/{blueprint_id}/print_providers/{provider['id']}/shipping.json",
+        headers=PRINTIFY_HEADERS,
+    )
 
-# ==========================================
-# ROUTES
-# ==========================================
-# In backend_routes.py
+    variants_response, shipping_response = await asyncio.gather(
+        variants_task,
+        shipping_task,
+    )
+
+    provider["variants"] = variants_response.json()["variants"] if variants_response.status_code == 200 else []
+    provider["shipping"] = shipping_response.json() if variants_response.status_code == 200 else {}
+
+    return provider
+
+async def fetch_blueprint(client, bp):
+    providers_response = await client.get(
+        f"https://api.printify.com/v1/catalog/blueprints/{bp['id']}/print_providers.json",
+        headers=PRINTIFY_HEADERS,
+    )
+
+    providers = providers_response.json()
+
+    providers = await asyncio.gather(
+        *[
+            fetch_provider_details(client, bp["id"], provider)
+            for provider in providers
+        ]
+    )
+
+    bp["providers"] = providers
+    bp["category"] = APPROVED_BLUEPRINTS[bp["id"]]
+
+    return bp
 
 
 @router.get("/catalog")
+@cache(expire=600)
 async def get_catalog():
     async with httpx.AsyncClient(timeout=30.0) as client:
-        respon = await client.get(
+        response = await client.get(
             "https://api.printify.com/v1/catalog/blueprints.json",
             headers=PRINTIFY_HEADERS,
         )
-        
-        if respon.status_code != 200:
-            raise HTTPException(status_code=400, detail="Failed to load catalog")
-            
-        all_blueprints = respon.json()
-        
-        # Filter the massive list down to just your approved items 
-        # and inject your clean categories
-        curated_catalog = []
-        for bp in all_blueprints:
-            if bp["id"] in APPROVED_BLUEPRINTS:
-                bp["custom_category"] = APPROVED_BLUEPRINTS[bp["id"]]
-                curated_catalog.append(bp)
-                
-        return curated_catalog
 
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=400,
+                detail="Failed to load catalog",
+            )
+
+        all_blueprints = response.json()
+
+        approved = [
+            bp
+            for bp in all_blueprints
+            if bp["id"] in APPROVED_BLUEPRINTS
+        ]
+
+        curated_catalog = await asyncio.gather(
+            *[
+                fetch_blueprint(client, bp)
+                for bp in approved
+            ]
+        )
+
+        return curated_catalog
 
 @router.post("/upload-artwork")
 async def upload_artwork(artwork: ArtworkUpload): 
@@ -75,14 +110,14 @@ async def upload_artwork(artwork: ArtworkUpload):
             
         return {"file_id": upload_resp.json()["id"]}
 
-
 @router.post("/create-product")
 async def create_product(product: ProductCreate): 
-    catalog_item = CATALOG.get(product.catalog_id)
+    catalog = await get_catalog()
+    catalog_item = next((item for item in catalog if item["id"] == product.blueprint_id), None)
     if not catalog_item:
         raise HTTPException(status_code=400, detail="Invalid catalog ID")
 
-    blueprint_id = catalog_item["blueprint_id"]
+    blueprint_id = catalog_item["id"]
     provider_id = catalog_item["print_provider_id"]
 
     async with httpx.AsyncClient(timeout=45.0) as client:
@@ -97,14 +132,12 @@ async def create_product(product: ProductCreate):
             
         variants_data = variants_resp.json().get("variants", [])
         
-        # Build the variants list (setting a default price combining base cost + your markup)
-        # Note: If Printify doesn't supply 'cost', we default to a flat $40.00 (4000 cents)
         active_variants = []
         variant_ids = []
         for v in variants_data:
             variant_ids.append(v["id"])
             retail_price = v.get("cost", 2500) + catalog_item["markup_cents"]
-            active_variants.append({"id": v["id"], "price": retail_price, "is_enabled": True})
+            active_variants.append({ "id": v["id"], "price": retail_price, "is_enabled": True })
 
         # 2. BUILD THE PRODUCT PAYLOAD WITH ALL VARIANTS
         product_payload = {
