@@ -34,7 +34,7 @@ async def fetch_provider_details(client, blueprint_id, provider):
     )
 
     provider["variants"] = variants_response.json()["variants"] if variants_response.status_code == 200 else []
-    provider["shipping"] = shipping_response.json() if variants_response.status_code == 200 else {}
+    provider["shipping"] = shipping_response.json() if shipping_response.status_code == 200 else {}
 
     return provider
 

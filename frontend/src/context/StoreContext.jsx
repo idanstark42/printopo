@@ -15,7 +15,7 @@ const emptyDraftDesign = {
   zoom: 11.00,
   pitch: 0,
   bearing: 0,
-  style: 'idanstark42/cmrn6eyww002101qxe4no5yko',
+  style: 'idanstark42/cmsf3qksa005u01sa2fk83j4u',
 }
 
 // 2. Create the Provider Component
