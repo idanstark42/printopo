@@ -1,5 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { StoreProvider, useStore } from './context/StoreContext'
+import { DesignProvider } from './context/DesignContext'
+import { ProductProvider } from './context/ProductContext'
+import { DraftDesignProvider } from './context/DraftDesignContext'
 import Landing from './pages/Landing'
 import Login from './pages/Login'
 import Editor from './pages/Editor'
@@ -32,11 +35,24 @@ function AppRoutes() {
   )
 }
 
-// Wrap the router in the Provider
-export default function App() {
+export function AppProviders({ children }) {
   return (
     <StoreProvider>
-      <AppRoutes />
+      <DesignProvider>
+        <ProductProvider>
+          <DraftDesignProvider>
+            {children}
+          </DraftDesignProvider>
+        </ProductProvider>
+      </DesignProvider>
     </StoreProvider>
+  )
+}
+
+export default function App() {
+  return (
+    <AppProviders>
+      <AppRoutes />
+    </AppProviders>
   )
 }

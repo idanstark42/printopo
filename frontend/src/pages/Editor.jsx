@@ -1,18 +1,14 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useStore } from '../context/StoreContext'
+import { useDraftDesign } from '../context/DraftDesignContext'
 import mapboxgl from 'mapbox-gl'
 
+import { Map } from '../lib/map'
 import Accordion from '../components/Accordion'
 import NumberControl from '../components/NumberControl'
-
-mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN
-
-const STYLES = [
-  { id: 'idanstark42/cmsf3qksa005u01sa2fk83j4u', name: 'Topography Light', editable: true },
-  { id: 'idanstark42/cmsfwsqj700iy01s91xseeo19', name: 'Topography Dark', editable: true },
-  { id: 'mapbox/satellite-v9', name: 'Satellite View', editable: false }
-]
+import Search from '../components/Search'
+import { colorToHex } from '../lib/utils'
 
 const LAYER_NAMES = {
   'contour': 'Topography',
@@ -22,201 +18,124 @@ const LAYER_NAMES = {
   'country-boundary': 'Borders',
 }
 
-const colorToHex = (colorStr) => {
-  if (!colorStr) return '#000000'
-  if (colorStr.startsWith('#')) {
-    if (colorStr.length === 4) return '#' + colorStr[1] + colorStr[1] + colorStr[2] + colorStr[2] + colorStr[3] + colorStr[3]
-    return colorStr.substring(0, 7)
-  }
-  const canvas = document.createElement('canvas')
-  const ctx = canvas.getContext('2d')
-  ctx.fillStyle = colorStr
-  const computed = ctx.fillStyle
-  return computed.startsWith('#') ? computed.substring(0, 7) : '#000000'
-}
+const BACKEND = 'http://127.0.0.1:8000'
 
 export default function Editor() {
   const navigate = useNavigate()
-  const { draftDesign, setDraftDesign, cart, setUser, uploadDesign, catalog, fetchCatalog } = useStore()
+  const { cart, setUser, catalog, fetchCatalog } = useStore()
+  
+  const { draftDesign, setDraftDesign } = useDraftDesign()
+  const layers = draftDesign.layers || {}
 
   const [loadingPreview, setLoadingPreview] = useState(false)
-
-  // Accordion State Manager
-  const [expanded, setExpanded] = useState({
-    search: true,
-    product: true,
-    style: true,
-    styling: true,
-    manual: false
-  })
-  const toggleSection = (sec) => setExpanded(prev => ({ ...prev, [sec]: !prev[sec] }))
-
   const mapContainer = useRef(null)
   const map = useRef(null)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [layerProps, setLayerProps] = useState({})
-
-  const BASE_OFFSET = 3;
-  const currentDetails = draftDesign.details ?? 50; 
-  
-  const getDetailZoomOffset = (detailsVal) => ((detailsVal - 50) / 50) * BASE_OFFSET;
-
-  const detailZoomRef = useRef(getDetailZoomOffset(currentDetails));
-  const scale = Math.pow(2, detailZoomRef.current);
 
   useEffect(() => {
-    if (catalog && catalog.length === 0) {
-      fetchCatalog()
-    }
+    if (catalog && catalog.length === 0) fetchCatalog()
   }, [catalog])
 
   useEffect(() => {
     if (map.current) return
 
-    map.current = new mapboxgl.Map({
-      container: mapContainer.current,
-      style: `mapbox://styles/${draftDesign.style}`,
-      center: [Number(draftDesign.lng), Number(draftDesign.lat)],
-      zoom: Number(draftDesign.zoom) + detailZoomRef.current,
-      dragPitch: false, 
-      touchPitch: false, 
-      pitchWithRotate: false, 
-      preserveDrawingBuffer: true 
-    })
+    map.current = new Map(mapContainer.current, draftDesign, setDraftDesign)
+    const mapbox = map.current.map
 
     const resizeObserver = new ResizeObserver(() => {
-      if (map.current) map.current.resize()
+      if (mapbox) mapbox.resize()
+    })
+    resizeObserver.observe(mapContainer.current)
+
+    mapbox.on('move', () => {
+      setDraftDesign(prev => {
+        const actualZoom = mapbox.getZoom()
+        const expectedTotalZoom = Map.calculateTotalZoom(prev.zoom, prev.details ?? 50)
+        
+        // If the map's current zoom differs from what React thinks it should be, 
+        // the user is zooming using the scroll wheel / pinch gestures.
+        const userZoomedMap = Math.abs(actualZoom - expectedTotalZoom) > 0.001
+        
+        const nextDetails = userZoomedMap ? 50 : (prev.details ?? 50)
+        const currentOffset = Map.getDetailOffset(nextDetails)
+
+        return {
+          ...prev,
+          lng: mapbox.getCenter().lng.toFixed(4),
+          lat: mapbox.getCenter().lat.toFixed(4),
+          zoom: (actualZoom - currentOffset).toFixed(2),
+          details: nextDetails,
+          pitch: mapbox.getPitch().toFixed(0),
+          bearing: mapbox.getBearing().toFixed(0)
+        }
+      })
     })
 
-    if (mapContainer.current) {
-      resizeObserver.observe(mapContainer.current)
-    }
-
-    map.current.on('move', () => {
-      if (!map.current) return;
-      
-      // When dragging/zooming the map directly, update base zoom and reset details to default (50) matching that new zoom
-      const actualMapZoom = map.current.getZoom();
-      const newBaseZoom = actualMapZoom - detailZoomRef.current;
-
-      setDraftDesign(current => ({
-        ...current,
-        lng: map.current.getCenter().lng.toFixed(4),
-        lat: map.current.getCenter().lat.toFixed(4),
-        zoom: newBaseZoom.toFixed(2),
-        details: 50, // Reset/override details to default matching zoom on free move
-        pitch: map.current.getPitch().toFixed(0),
-        bearing: map.current.getBearing().toFixed(0)
-      }))
-    })
-
-    map.current.on('styledata', () => {
-      extractMapLayers()
+    mapbox.on('styledata', () => {
+      const extractedLayers = Map.extractLayers(mapbox)
+      setDraftDesign(prev => ({ ...prev, layers: { ...extractedLayers, ...prev.layers } }))
     })
 
     return () => {
       resizeObserver.disconnect()
       if (map.current) {
-        map.current.remove()
+        map.current.destroy()
         map.current = null
       }
     }
-  }, [])
+  }, []) 
 
-  const extractMapLayers = () => {
-    if (!map.current || !map.current.style || !map.current.style._layers) return
-    const newLayerProps = {}
+  async function uploadDesign() {
+    const { data } = await supabase.auth.getSession()
+    const token = data.session?.access_token
 
-    Object.keys(map.current.style._layers).forEach(layerId => {
-      const layerObj = map.current.getLayer(layerId)
-      if (layerObj && layerObj.paint) {
-        const cleanPaint = {}
-        Object.entries(layerObj.paint).forEach(([k, v]) => {
-          if (typeof v === 'string' || typeof v === 'number') {
-            cleanPaint[k] = v
-          }
-        })
-        if (Object.keys(cleanPaint).length > 0) {
-          newLayerProps[layerId] = cleanPaint
-        }
-      }
+    const base64Image = await generateHighResMap(draftDesign)
+
+    const payload = {
+      title: `printopo-image-${Date.now()}`,
+      image_data: base64Image
+    }
+
+    const response = await fetch(`${BACKEND}/printify/upload-artwork`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(payload)
     })
-    setLayerProps(newLayerProps)
-  }
-
-  const handleManualCoordinateChange = (field, value) => {
-    const numValue = parseFloat(value)
-
-    if (field === 'zoom' && !isNaN(numValue)) {
-      // When typing or sliding zoom manually, update zoom and override details back to default (50)
-      const newOffset = getDetailZoomOffset(50);
-      detailZoomRef.current = newOffset;
-
-      const newState = { ...draftDesign, zoom: value, details: 50 }
-      setDraftDesign(newState)
-
-      if (map.current) {
-        map.current.setZoom(numValue + newOffset);
-        setTimeout(() => {
-          if (map.current) map.current.resize();
-        }, 0);
-      }
-      return;
-    }
-
-    const newState = { ...draftDesign, [field]: value }
-    setDraftDesign(newState)
-
-    if (!isNaN(numValue) && map.current && field !== 'zoom') {
-      map.current.setCenter([Number(newState.lng), Number(newState.lat)])
-    }
-  }
-
-  const handleDetailsChange = (val) => {
-    const newOffset = getDetailZoomOffset(val);
-    const deltaZoom = newOffset - detailZoomRef.current;
     
-    detailZoomRef.current = newOffset;
-    setDraftDesign(prev => ({ ...prev, details: val }));
-    
-    if (map.current) {
-      map.current.setZoom(map.current.getZoom() + deltaZoom);
-      setTimeout(() => {
-        if (map.current) map.current.resize();
-      }, 0);
-    }
+    const result = await response.json()
+    setDraftDesign(prev => ({ ...prev, fileId: result.file_id }))
   }
 
-  const handleStyleChange = (e) => {
-    const style = e.target.value
-    setDraftDesign({ ...draftDesign, style })
-    if (map.current) {
-      map.current.setStyle(`mapbox://styles/${style}`)
-    }
-  }
+  async function generateHighResMap(currentDraft) {
+    return new Promise((resolve) => {
+      const hiddenDiv = document.createElement('div')
+      hiddenDiv.style.width = '2000px'
+      hiddenDiv.style.height = '2000px'
+      hiddenDiv.style.position = 'absolute'
+      hiddenDiv.style.left = '-9999px'
+      document.body.appendChild(hiddenDiv)
 
-  const handlePaintPropertyChange = (layerId, propName, value) => {
-    if (map.current) {
-      map.current.setPaintProperty(layerId, propName, value)
-    }
-    setLayerProps(prev => ({
-      ...prev,
-      [layerId]: {
-        ...prev[layerId],
-        [propName]: value
-      }
-    }))
-  }
+      const exportMap = new mapboxgl.Map({
+        container: hiddenDiv,
+        style: `mapbox://styles/${currentDraft.style}`,
+        center: [currentDraft.lng, currentDraft.lat],
+        zoom: currentDraft.zoom,
+        pitch: currentDraft.pitch || 0,
+        bearing: currentDraft.bearing,
+        preserveDrawingBuffer: true,
+        interactive: false
+      })
 
-  const handleSearch = async (e) => {
-    e.preventDefault()
-    if (!searchQuery) return
-    const res = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(searchQuery)}.json?access_token=${mapboxgl.accessToken}`)
-    const data = await res.json()
-    if (data.features && data.features.length > 0) {
-      const [lng, lat] = data.features[0].center
-      map.current.flyTo({ center: [lng, lat], zoom: 12 + detailZoomRef.current })
-    }
+      exportMap.on('idle', () => {
+        const base64 = exportMap.getCanvas().toDataURL('image/png')
+        exportMap.remove()
+        hiddenDiv.remove()
+        const cleanBase64 = base64.replace(/^data:image\/png;base64,/, "")
+        resolve(cleanBase64)
+      })
+    })
   }
 
   const handlePreview = async () => {
@@ -237,27 +156,26 @@ export default function Editor() {
     return acc
   }, {})
 
-  const currentStyleDef = STYLES.find(s => s.id === draftDesign.style)
+  const currentDetails = draftDesign.details ?? 50
+  const scale = Map.getScaleFactor(currentDetails)
+  const currentStyleDef = Map.STYLES.find(s => s.id === draftDesign.style)
   const isStyleEditable = currentStyleDef?.editable
+  const isResettable = Object.keys(layers).length > 0
 
   return (
     <div className="flex h-screen bg-gray-900">
-
+      
       {/* Sidebar Controls */}
       <div className="w-80 bg-white shadow-2xl flex flex-col z-10 shrink-0">
         <div className="p-6 flex-grow overflow-y-auto">
           <Accordion title="Search Location">
-            <form onSubmit={handleSearch} className="mb-4">
-              <div className="flex gap-2">
-                <input
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="flex-grow p-2 border border-gray-300 rounded focus:ring-1 focus:ring-forest-500 focus:border-forest-500 outline-none transition-all"
-                  placeholder="e.g. Central Park, NY"
-                />
-                <button type="submit" className="bg-forest-900 hover:bg-forest-700 text-white px-3 py-2 rounded font-bold transition-colors">Go</button>
-              </div>
-            </form>
+            <Search 
+              lng={draftDesign.lng} 
+              lat={draftDesign.lat} 
+              onSelect={({ lng, lat }) => {
+                map.current?.flyTo(lng, lat, 12, currentDetails)
+              }} 
+            />
           </Accordion>
 
           <div className="space-y-2">
@@ -271,7 +189,7 @@ export default function Editor() {
                         <div
                           key={item.id}
                           className={`mb-2 border rounded cursor-pointer transition-all ${draftDesign.product === item.id ? 'border-forest-500 bg-forest-50' : 'border-gray-300 hover:border-gray-500'}`}
-                          onClick={() => setDraftDesign({ ...draftDesign, product: item.id })}
+                          onClick={() => setDraftDesign(prev => ({ ...prev, product: item.id }))}
                           style={{ backgroundImage: `url(${item.images[0]})`, backgroundSize: 'cover', backgroundPosition: 'center', aspectRatio: 1 }}
                         />
                       ))}
@@ -284,15 +202,15 @@ export default function Editor() {
             <div>
               <Accordion title="Map Style">
                 <div className="grid grid-cols-3 gap-2">
-                  {STYLES.map(style => (
+                  {Map.STYLES.map(style => (
                     <div
                       key={style.id}
                       className={`mb-2 p-2 border rounded cursor-pointer transition-all ${draftDesign.style === style.id ? 'border-forest-500 bg-forest-50' : 'border-gray-300 hover:border-gray-500'}`}
-                      onClick={() => handleStyleChange({ target: { value: style.id } })}
+                      onClick={() => map.current?.changeStyle(style.id)}
                       title={style.name}
                       style={{ 
                         aspectRatio: 1, 
-                        backgroundImage: `url(https://api.mapbox.com/styles/v1/${style.id}/static/-73.9851,40.7589,10,0,0/300x300?access_token=${mapboxgl.accessToken})`,
+                        backgroundImage: `url(https://api.mapbox.com/styles/v1/${style.id}/static/-73.9851,40.7589,10,0,0/300x300?access_token=${Map.ACCESS_TOKEN})`,
                         backgroundSize: 'cover', 
                         backgroundPosition: 'center',
                         position: 'relative'
@@ -304,58 +222,71 @@ export default function Editor() {
                     </div>
                   ))}
                 </div>
+
+                {isStyleEditable && (
+                  <>
+                    <div className="pt-2">
+                      {isResettable && <div className="flex justify-between items-center mb-3">
+                        <button 
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            map.current?.resetStyle(draftDesign.style)
+                          }} 
+                          className="text-xs text-forest-900 hover:underline font-semibold"
+                          title="Reset layer properties to default"
+                        >
+                          Reset
+                        </button>
+                      </div>}
+                      {Object.entries(layers).map(([layerId, paintProps]) => (
+                        <div key={layerId} className="mb-5 p-3 bg-gray-50 rounded border border-gray-100">
+                          <h4 className="text-xs font-bold text-forest-900 mb-3 uppercase tracking-wider">{LAYER_NAMES[layerId] || layerId}</h4>
+                          {Object.entries(paintProps).map(([propName, propValue]) => {
+                            const isColor = propName.includes('color')
+
+                            if (isColor) {
+                              return (
+                                <div key={propName} className="mb-3 flex justify-between items-center">
+                                  <label className="text-[10px] font-bold text-gray-500 uppercase">{propName}</label>
+                                  <div className="flex gap-2 items-center">
+                                    <input
+                                      type="color"
+                                      value={colorToHex(propValue)}
+                                      onChange={(e) => map.current?.changePaintProperty(layerId, propName, e.target.value)}
+                                      className="w-6 h-6 p-0 border-0 rounded cursor-pointer"
+                                    />
+                                    <input
+                                      type="text"
+                                      value={propValue}
+                                      onChange={(e) => map.current?.changePaintProperty(layerId, propName, e.target.value)}
+                                      className="w-20 p-1 text-[10px] border border-gray-300 rounded font-mono"
+                                    />
+                                  </div>
+                                </div>
+                              )
+                            }
+
+                            const maxVal = propName.includes('opacity') ? 1 : 20
+                            const step = propName.includes('opacity') ? 0.05 : 0.5
+
+                            return (
+                              <NumberControl
+                                key={propName}
+                                label={propName}
+                                value={Number(propValue)}
+                                onChange={(val) => map.current?.changePaintProperty(layerId, propName, val)}
+                                min={0} max={maxVal} step={step}
+                              />
+                            )
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </Accordion>
             </div>
-
-            {isStyleEditable && (
-              <div>
-                <Accordion title="Map Styling">
-                  {Object.entries(layerProps).map(([layerId, paintProps]) => (
-                    <div key={layerId} className="mb-5 p-3 bg-gray-50 rounded border border-gray-100">
-                      <h4 className="text-xs font-bold text-forest-900 mb-3 uppercase tracking-wider">{LAYER_NAMES[layerId] || layerId}</h4>
-                      {Object.entries(paintProps).map(([propName, propValue]) => {
-                        const isColor = propName.includes('color')
-
-                        if (isColor) {
-                          return (
-                            <div key={propName} className="mb-3 flex justify-between items-center">
-                              <label className="text-[10px] font-bold text-gray-500 uppercase">{propName}</label>
-                              <div className="flex gap-2 items-center">
-                                <input
-                                  type="color"
-                                  value={colorToHex(propValue)}
-                                  onChange={(e) => handlePaintPropertyChange(layerId, propName, e.target.value)}
-                                  className="w-6 h-6 p-0 border-0 rounded cursor-pointer"
-                                />
-                                <input
-                                  type="text"
-                                  value={propValue}
-                                  onChange={(e) => handlePaintPropertyChange(layerId, propName, e.target.value)}
-                                  className="w-20 p-1 text-[10px] border border-gray-300 rounded font-mono"
-                                />
-                              </div>
-                            </div>
-                          )
-                        }
-
-                        const maxVal = propName.includes('opacity') ? 1 : 20
-                        const step = propName.includes('opacity') ? 0.05 : 0.5
-
-                        return (
-                          <NumberControl
-                            key={propName}
-                            label={propName}
-                            value={Number(propValue)}
-                            onChange={(val) => handlePaintPropertyChange(layerId, propName, val)}
-                            min={0} max={maxVal} step={step}
-                          />
-                        )
-                      })}
-                    </div>
-                  ))}
-                </Accordion>
-              </div>
-            )}
 
             <div>
               <Accordion title="Manual Controls">
@@ -365,7 +296,7 @@ export default function Editor() {
                     <input
                       type="number" step="0.0001"
                       value={draftDesign.lng}
-                      onChange={(e) => handleManualCoordinateChange('lng', e.target.value)}
+                      onChange={(e) => map.current?.changeCoordinates(e.target.value, draftDesign.lat)}
                       className="w-full p-2 text-sm border border-gray-300 rounded outline-none focus:border-forest-500 font-mono"
                     />
                   </div>
@@ -374,7 +305,7 @@ export default function Editor() {
                     <input
                       type="number" step="0.0001"
                       value={draftDesign.lat}
-                      onChange={(e) => handleManualCoordinateChange('lat', e.target.value)}
+                      onChange={(e) => map.current?.changeCoordinates(draftDesign.lng, e.target.value)}
                       className="w-full p-2 text-sm border border-gray-300 rounded outline-none focus:border-forest-500 font-mono"
                     />
                   </div>
@@ -383,24 +314,22 @@ export default function Editor() {
                 <NumberControl
                   label="Zoom (Area Size)"
                   value={Number(draftDesign.zoom)}
-                  onChange={(val) => handleManualCoordinateChange('zoom', val)}
+                  onChange={(val) => map.current?.changeZoomAndDetails(val, 50)}
+                  min={0}
                   max={20}
                 />
                 
                 <NumberControl
-                  label="Details (Resolution)"
-                  value={currentDetails}
-                  onChange={handleDetailsChange}
+                  label="Increased Detail Level"
+                  value={draftDesign.details}
+                  onChange={(val) => map.current?.changeZoomAndDetails(draftDesign.zoom, val)}
                   min={0} max={100} step={1}
                 />
 
                 <NumberControl
                   label="Bearing (North)"
                   value={Number(draftDesign.bearing)}
-                  onChange={(val) => {
-                    setDraftDesign(prev => ({ ...prev, bearing: val }))
-                    map.current?.setBearing(val)
-                  }}
+                  onChange={(val) => map.current?.changeBearing(val)}
                   min={-180} max={180} step={1}
                 />
               </Accordion>
@@ -422,7 +351,6 @@ export default function Editor() {
                   d="M12 22c5.421 0 10-4.579 10-10h-2c0 4.337-3.663 8-8 8s-8-3.663-8-8c0-4.336 3.663-8 8-8V2C6.579 2 2 6.58 2 12c0 5.421 4.579 10 10 10z" />
               </svg>
               <span className='text-white'>Loading...</span>
-              <span className="sr-only"></span>
             </> : 'Generate 3D Preview'}
           </button>
 
@@ -439,8 +367,6 @@ export default function Editor() {
 
       {/* Map Area */}
       <div className="flex-grow relative w-full h-full flex justify-center items-center overflow-hidden bg-gray-100">
-        
-        {/* Scaled mapbox container */}
         <div 
           ref={mapContainer} 
           style={{
